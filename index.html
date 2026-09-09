@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DeepFocus Webcam CV Test</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #172033;
+      background: #f5f7fb;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+    h1 { margin: 0 0 6px; font-size: 28px; }
+    .sub { margin: 0 0 20px; color: #667085; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, .8fr); gap: 18px; }
+    .card { background: white; border: 1px solid #e4e7ec; border-radius: 16px; padding: 16px; }
+    .video-wrap { position: relative; overflow: hidden; border-radius: 12px; background: #111827; aspect-ratio: 4 / 3; }
+    video, canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    canvas { pointer-events: none; }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+    button {
+      border: 0; border-radius: 10px; padding: 11px 16px; font-size: 15px; font-weight: 700;
+      cursor: pointer; background: #175cd3; color: white;
+    }
+    button.secondary { background: #344054; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .status {
+      margin-top: 12px; padding: 10px 12px; border-radius: 10px;
+      background: #f2f4f7; color: #475467; font-size: 14px;
+    }
+    .big-score { display: flex; align-items: baseline; gap: 7px; margin: 2px 0 14px; }
+    .big-score strong { font-size: 52px; line-height: 1; }
+    .big-score span { color: #667085; }
+    .metric { margin: 12px 0; }
+    .metric-head { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; }
+    .bar { height: 9px; background: #eaecf0; border-radius: 99px; overflow: hidden; margin-top: 6px; }
+    .bar > i { display: block; height: 100%; width: 0%; background: #667085; transition: width .12s linear; }
+    .badge { display: inline-block; padding: 6px 10px; border-radius: 999px; font-weight: 800; font-size: 14px; background: #f2f4f7; }
+    .ok { background: #ecfdf3; color: #027a48; }
+    .warn { background: #fff6ed; color: #c4320a; }
+    .bad { background: #fef3f2; color: #b42318; }
+    .small { color: #667085; font-size: 13px; line-height: 1.55; }
+    ul { padding-left: 20px; margin-bottom: 0; }
+    code { background: #f2f4f7; border-radius: 5px; padding: 2px 5px; }
+    @media (max-width: 820px) {
+      body { padding: 14px; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>DeepFocus Webcam CV Test</h1>
+  <p class="sub">웹캠 → 브라우저 내 MediaPipe → 행동 특징값 → 임시 집중 상태 추정</p>
+
+  <div class="grid">
+    <section class="card">
+      <div class="video-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
+
+      <div class="controls">
+        <button id="startBtn" disabled>카메라 시작</button>
+        <button id="stopBtn" class="secondary" disabled>중지</button>
+      </div>
+      <div id="status" class="status">MediaPipe 모델을 불러오는 중...</div>
+    </section>
+
+    <aside class="card">
+      <div id="focusBadge" class="badge">대기 중</div>
+      <div class="big-score">
+        <strong id="focusScore">--</strong><span>/ 100</span>
+      </div>
+
+      <div class="metric">
+        <div class="metric-head"><span>얼굴 감지</span><strong id="faceText">-</strong></div>
+        <div class="bar"><i id="faceBar"></i></div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-head"><span>정면 유지 추정</span><strong id="headText">-</strong></div>
+        <div class="bar"><i id="headBar"></i></div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-head"><span>시선 안정도 추정</span><strong id="gazeText">-</strong></div>
+        <div class="bar"><i id="gazeBar"></i></div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-head"><span>눈 감김 정도</span><strong id="blinkText">-</strong></div>
+        <div class="bar"><i id="blinkBar"></i></div>
+      </div>
+
+      <p class="small">
+        이 점수는 <b>프로토타입 검증용 휴리스틱</b>입니다.
+        실제 “집중도”를 직접 측정하는 값이 아니며, 향후 사용자 실험과 라벨링을 통해 보정해야 합니다.
+      </p>
+    </aside>
+  </div>
+
+  <section class="card" style="margin-top:18px">
+    <b>테스트 방법</b>
+    <ul class="small">
+      <li>정면을 보다가 고개를 좌우로 돌려 <b>정면 유지 추정</b> 값이 변하는지 확인</li>
+      <li>화면 바깥을 바라보며 <b>시선 안정도 추정</b> 값이 변하는지 확인</li>
+      <li>눈을 감거나 몇 번 깜빡여 <b>눈 감김 정도</b> 값이 반응하는지 확인</li>
+      <li>얼굴을 프레임 밖으로 빼서 <b>얼굴 감지</b>가 0으로 떨어지는지 확인</li>
+    </ul>
+  </section>
+</div>
+
+<script type="module">
+  import {
+    FaceLandmarker,
+    FilesetResolver,
+    DrawingUtils
+  } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/+esm";
+
+  const video = document.getElementById("video");
+  const canvas = document.getElementById("overlay");
+  const ctx = canvas.getContext("2d");
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const statusEl = document.getElementById("status");
+
+  const focusScoreEl = document.getElementById("focusScore");
+  const focusBadge = document.getElementById("focusBadge");
+
+  const bars = {
+    face: document.getElementById("faceBar"),
+    head: document.getElementById("headBar"),
+    gaze: document.getElementById("gazeBar"),
+    blink: document.getElementById("blinkBar"),
+  };
+  const texts = {
+    face: document.getElementById("faceText"),
+    head: document.getElementById("headText"),
+    gaze: document.getElementById("gazeText"),
+    blink: document.getElementById("blinkText"),
+  };
+
+  let landmarker = null;
+  let stream = null;
+  let running = false;
+  let lastVideoTime = -1;
+  let rafId = null;
+  let drawingUtils = null;
+
+  function clamp(v, lo=0, hi=1) { return Math.max(lo, Math.min(hi, v)); }
+  function pct(v) { return Math.round(clamp(v) * 100); }
+
+  function setMetric(key, value, suffix="%") {
+    const p = pct(value);
+    bars[key].style.width = p + "%";
+    texts[key].textContent = p + suffix;
+  }
+
+  function categoryMap(result) {
+    const map = new Map();
+    const cats = result?.faceBlendshapes?.[0]?.categories || [];
+    for (const c of cats) {
+      const name = c.categoryName || c.displayName || "";
+      map.set(name, c.score ?? 0);
+    }
+    return map;
+  }
+
+  function pointDistance(a, b) {
+    const dx = a.x - b.x, dy = a.y - b.y;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+
+  function estimateHeadFrontness(lm) {
+    // 코끝(1)이 양쪽 얼굴 외곽(234/454)의 중앙에 가까운지로 yaw를 아주 거칠게 추정.
+    const nose = lm[1], left = lm[234], right = lm[454];
+    if (!nose || !left || !right) return 0;
+    const dl = pointDistance(nose, left);
+    const dr = pointDistance(nose, right);
+    const asym = Math.abs(dl - dr) / Math.max(0.0001, dl + dr);
+    return clamp(1 - asym * 3.2);
+  }
+
+  function estimateGazeStability(blend) {
+    const keys = [
+      "eyeLookDownLeft","eyeLookDownRight","eyeLookUpLeft","eyeLookUpRight",
+      "eyeLookInLeft","eyeLookInRight","eyeLookOutLeft","eyeLookOutRight"
+    ];
+    let max = 0;
+    for (const k of keys) max = Math.max(max, blend.get(k) || 0);
+    // 강한 극단 시선을 이탈 가능성으로 취급. 개인차가 크므로 단순 데모용.
+    return clamp(1 - max * 1.15);
+  }
+
+  function estimateBlink(blend) {
+    const l = blend.get("eyeBlinkLeft") || 0;
+    const r = blend.get("eyeBlinkRight") || 0;
+    return clamp((l + r) / 2);
+  }
+
+  function updateFocus(facePresent, head, gaze, blink) {
+    if (!facePresent) {
+      focusScoreEl.textContent = "0";
+      focusBadge.textContent = "얼굴 없음";
+      focusBadge.className = "badge bad";
+      return;
+    }
+
+    // 깜빡임 1~2프레임은 정상 현상이므로 약하게만 감점.
+    const score = Math.round(
+      35 +
+      head * 35 +
+      gaze * 28 -
+      Math.max(0, blink - 0.55) * 10
+    );
+    const s = Math.max(0, Math.min(100, score));
+    focusScoreEl.textContent = s;
+
+    if (s >= 78) {
+      focusBadge.textContent = "집중 상태 추정";
+      focusBadge.className = "badge ok";
+    } else if (s >= 55) {
+      focusBadge.textContent = "주의 필요";
+      focusBadge.className = "badge warn";
+    } else {
+      focusBadge.textContent = "이탈 가능성";
+      focusBadge.className = "badge bad";
+    }
+  }
+
+  function resizeCanvas() {
+    const w = video.videoWidth || 640;
+    const h = video.videoHeight || 480;
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+  }
+
+  async function initModel() {
+    try {
+      const fileset = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm"
+      );
+
+      // GPU가 실패하는 환경을 고려해 CPU fallback.
+      try {
+        landmarker = await FaceLandmarker.createFromOptions(fileset, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO",
+          numFaces: 1,
+          outputFaceBlendshapes: true,
+          outputFacialTransformationMatrixes: false
+        });
+      } catch (gpuErr) {
+        console.warn("GPU delegate unavailable, falling back to CPU.", gpuErr);
+        landmarker = await FaceLandmarker.createFromOptions(fileset, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+            delegate: "CPU"
+          },
+          runningMode: "VIDEO",
+          numFaces: 1,
+          outputFaceBlendshapes: true,
+          outputFacialTransformationMatrixes: false
+        });
+      }
+
+      drawingUtils = new DrawingUtils(ctx);
+      startBtn.disabled = false;
+      statusEl.textContent = "모델 준비 완료. '카메라 시작'을 눌러주세요.";
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = "모델 로딩 실패: " + (err?.message || err);
+    }
+  }
+
+  async function startCamera() {
+    if (!landmarker) return;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }
+      });
+      video.srcObject = stream;
+      await video.play();
+
+      running = true;
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      statusEl.textContent = "카메라 동작 중 — 영상은 이 페이지에서만 처리됩니다.";
+      lastVideoTime = -1;
+      loop();
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = "카메라 접근 실패: " + (err?.message || err);
+    }
+  }
+
+  function stopCamera() {
+    running = false;
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+    video.srcObject = null;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    statusEl.textContent = "카메라가 중지되었습니다.";
+  }
+
+  async function loop() {
+    if (!running) return;
+    resizeCanvas();
+
+    if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+      lastVideoTime = video.currentTime;
+
+      try {
+        const nowMs = performance.now();
+        const result = landmarker.detectForVideo(video, nowMs);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const facePresent = !!(result.faceLandmarks && result.faceLandmarks.length);
+        setMetric("face", facePresent ? 1 : 0);
+
+        if (facePresent) {
+          const lm = result.faceLandmarks[0];
+          // 랜드마크 연결선을 얇게 표시.
+          drawingUtils.drawConnectors(
+            lm,
+            FaceLandmarker.FACE_LANDMARKS_FACE_OVAL,
+            { color: "#5eead4", lineWidth: 2 }
+          );
+          drawingUtils.drawConnectors(
+            lm,
+            FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
+            { color: "#93c5fd", lineWidth: 2 }
+          );
+          drawingUtils.drawConnectors(
+            lm,
+            FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE,
+            { color: "#93c5fd", lineWidth: 2 }
+          );
+
+          const blend = categoryMap(result);
+          const head = estimateHeadFrontness(lm);
+          const gaze = estimateGazeStability(blend);
+          const blink = estimateBlink(blend);
+
+          setMetric("head", head);
+          setMetric("gaze", gaze);
+          setMetric("blink", blink);
+          updateFocus(true, head, gaze, blink);
+        } else {
+          setMetric("head", 0);
+          setMetric("gaze", 0);
+          setMetric("blink", 0);
+          updateFocus(false, 0, 0, 0);
+        }
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "프레임 처리 오류: " + (err?.message || err);
+      }
+    }
+
+    rafId = requestAnimationFrame(loop);
+  }
+
+  startBtn.addEventListener("click", startCamera);
+  stopBtn.addEventListener("click", stopCamera);
+  window.addEventListener("beforeunload", stopCamera);
+
+  if (!window.isSecureContext) {
+    statusEl.textContent = "카메라는 localhost 또는 HTTPS 환경에서 실행해야 합니다.";
+  } else if (!navigator.mediaDevices?.getUserMedia) {
+    statusEl.textContent = "이 브라우저는 getUserMedia를 지원하지 않습니다.";
+  } else {
+    initModel();
+  }
+</script>
+</body>
+</html>
